@@ -14,7 +14,8 @@ export default function Navbar({ activeTab, setActiveTab, demoMode, user, openAu
   const [modelStatus, setModelStatus] = useState(null);
 
   useEffect(() => {
-    fetch('/api/health')
+    const apiBase = import.meta.env.VITE_API_URL || '';
+    fetch(`${apiBase}/api/health`)
       .then((r) => r.json())
       .then((data) => setModelStatus(data.model_loaded ? 'online' : 'demo'))
       .catch(() => setModelStatus('offline'));
