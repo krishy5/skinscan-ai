@@ -1,12 +1,12 @@
 import os
 import io
 import json
-import sqlite3
 import uuid
 import datetime
 import numpy as np
 from PIL import Image
 import cv2
+from supabase import create_client
 
 import tensorflow as tf
 from tensorflow import keras
@@ -18,10 +18,14 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DIST_FOLDER = os.path.join(BASE_DIR, 'frontend', 'dist')
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'static', 'uploads')
 SAMPLES_DIR = os.path.join(BASE_DIR, 'static', 'samples')
-DB_PATH = os.path.join(BASE_DIR, 'skinscan.db')
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(SAMPLES_DIR, exist_ok=True)
+
+# --- SUPABASE CLIENT ---
+SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://vkjhsxeoxzjpwezbwluw.supabase.co')
+SUPABASE_KEY = os.environ.get('SUPABASE_SERVICE_KEY', '')
+db = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -98,114 +102,29 @@ def preprocess_image_for_model(filepath):
     return img_array
 
 
-# --- DATABASE SETUP ---
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+# --- SUPABASE DB HELPERS ---
+def sb_insert_scan(scan):
+    db.table('scans').insert(scan).execute()
 
-def init_db():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT DEFAULT 'user',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS scans (
-            id TEXT PRIMARY KEY,
-            user_id TEXT,
-            filename TEXT,
-            original_image_url TEXT,
-            heatmap_image_url TEXT,
-            prediction TEXT,
-            confidence REAL,
-            probabilities TEXT,
-            raw_probabilities TEXT,
-            tdp_features TEXT,
-            quality_report TEXT,
-            notes TEXT DEFAULT '',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            model_version TEXT
-        )
-    ''')
+def sb_get_scans(user_id=None):
+    q = db.table('scans').select('*').order('created_at', desc=True)
+    if user_id:
+        q = q.eq('user_id', user_id)
+    return q.execute().data
 
-    cursor.execute("SELECT * FROM users WHERE email = 'user@skinscan.ai'")
-    if not cursor.fetchone():
-        cursor.execute(
-            'INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)',
-            (str(uuid.uuid4()), 'Demo User', 'user@skinscan.ai', 'password123', 'user')
-        )
-        cursor.execute(
-            'INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)',
-            (str(uuid.uuid4()), 'Dr. Sarah Chen (Researcher)', 'admin@skinscan.ai', 'admin123', 'admin')
-        )
+def sb_delete_scan(scan_id):
+    db.table('scans').delete().eq('id', scan_id).execute()
 
-    cursor.execute("SELECT COUNT(*) FROM scans")
-    if cursor.fetchone()[0] == 0:
-        seed_sample_scans(cursor)
+def sb_delete_scans(user_id=None):
+    q = db.table('scans').delete()
+    if user_id:
+        q = q.eq('user_id', user_id)
+    else:
+        q = q.neq('id', '')
+    q.execute()
 
-    conn.commit()
-    conn.close()
-
-def seed_sample_scans(cursor):
-    """Seed 3 sample scans reflecting the model's actual 3 classes."""
-    base = "https://skinscan-ai-avxh.onrender.com"
-    samples = [
-        {
-            "id": "scan-101",
-            "filename": "sample_bcc.jpg",
-            "prediction": "Basal Cell Carcinoma",
-            "confidence": 89.1,
-            "probabilities": {"Basal Cell Carcinoma": 0.891, "Melanoma": 0.071, "Squamous Cell Carcinoma": 0.038},
-            "tdp_features": {"texture": "Pearly translucent papule with telangiectasia", "border": "Rolled pearly borders", "color": "Pink translucent hue", "depth": "Central ulceration depression"},
-            "notes": "Nose bridge nodule. Recommended clinical follow-up.",
-            "created_at": (datetime.datetime.now() - datetime.timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
-        },
-        {
-            "id": "scan-102",
-            "filename": "sample_melanoma.jpg",
-            "prediction": "Melanoma",
-            "confidence": 87.5,
-            "probabilities": {"Melanoma": 0.875, "Basal Cell Carcinoma": 0.082, "Squamous Cell Carcinoma": 0.043},
-            "tdp_features": {"texture": "Asymmetric multi-nodular surface texture", "border": "Irregular notched borders", "color": "Variegated black-brown-red pigment variation", "depth": "Deep dermal extension pattern"},
-            "notes": "Lesion on lower leg. Patient noted slight itching.",
-            "created_at": (datetime.datetime.now() - datetime.timedelta(days=3)).strftime('%Y-%m-%d %H:%M:%S')
-        },
-        {
-            "id": "scan-103",
-            "filename": "sample_scc.jpg",
-            "prediction": "Squamous Cell Carcinoma",
-            "confidence": 84.8,
-            "probabilities": {"Squamous Cell Carcinoma": 0.848, "Basal Cell Carcinoma": 0.092, "Melanoma": 0.060},
-            "tdp_features": {"texture": "Hyperkeratotic scaly plaque surface", "border": "Erythematous indurated margin", "color": "Red-crusted scaling plaque", "depth": "Exophytic raised plateau profile"},
-            "notes": "Sun-exposed forearm lesion.",
-            "created_at": (datetime.datetime.now() - datetime.timedelta(days=12)).strftime('%Y-%m-%d %H:%M:%S')
-        }
-    ]
-    for s in samples:
-        cursor.execute('''
-            INSERT INTO scans (id, user_id, filename, original_image_url, heatmap_image_url,
-                               prediction, confidence, probabilities, raw_probabilities,
-                               tdp_features, quality_report, notes, created_at, model_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            s["id"], "user-1", s["filename"],
-            f"{base}/static/samples/{s['filename']}",
-            f"{base}/static/samples/heatmap_{s['filename']}",
-            s["prediction"], s["confidence"],
-            json.dumps(s["probabilities"]),
-            json.dumps(s["probabilities"]),
-            json.dumps(s["tdp_features"]),
-            json.dumps({"is_good": True, "score": 92, "warnings": []}),
-            s["notes"], s["created_at"], MODEL_VERSION
-        ))
+def sb_update_notes(scan_id, notes):
+    db.table('scans').update({'notes': notes}).eq('id', scan_id).execute()
 
 
 def create_dummy_sample_images():
@@ -230,7 +149,6 @@ def create_dummy_sample_images():
             cv2.imwrite(heatmap_path, overlay)
 
 create_dummy_sample_images()
-init_db()
 
 
 # --- IMAGE QUALITY CHECKER ---
@@ -434,29 +352,25 @@ def predict_lesion():
         original_url_full = f"{render_host}/static/uploads/{filename}"
         heatmap_url_full = f"{render_host}/static/uploads/{heatmap_filename}"
 
-        # Persist to DB
+        # Persist to Supabase
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
         user_id = request.form.get('user_id') or 'guest'
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO scans
-                (id, user_id, filename, original_image_url, heatmap_image_url,
-                 prediction, confidence, probabilities, raw_probabilities,
-                 tdp_features, quality_report, created_at, model_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            scan_id, user_id, filename, original_url_full, heatmap_url_full,
-            top_class, confidence,
-            json.dumps(probs),
-            json.dumps(probs),
-            json.dumps(tdp_features),
-            json.dumps(quality_report),
-            datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            MODEL_VERSION
-        ))
-        conn.commit()
-        conn.close()
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        sb_insert_scan({
+            'id': scan_id,
+            'user_id': user_id,
+            'filename': filename,
+            'original_image_url': original_url_full,
+            'heatmap_image_url': heatmap_url_full,
+            'prediction': top_class,
+            'confidence': confidence,
+            'probabilities': probs,
+            'tdp_features': tdp_features,
+            'quality_report': quality_report,
+            'notes': '',
+            'model_version': MODEL_VERSION,
+            'created_at': now,
+        })
 
         return jsonify({
             "id": scan_id,
@@ -481,115 +395,79 @@ def predict_lesion():
 @app.route('/api/scans', methods=['GET'])
 def list_scans():
     user_id = request.args.get('user_id')
-    conn = get_db()
-    cursor = conn.cursor()
-    if user_id:
-        cursor.execute("SELECT * FROM scans WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
-    else:
-        cursor.execute("SELECT * FROM scans ORDER BY created_at DESC")
-    rows = cursor.fetchall()
-    conn.close()
-
+    rows = sb_get_scans(user_id)
     return jsonify([{
-        "id": r["id"],
-        "filename": r["filename"],
-        "original_image_url": r["original_image_url"],
-        "heatmap_image_url": r["heatmap_image_url"],
-        "prediction": r["prediction"],
-        "confidence": r["confidence"],
-        "probabilities": json.loads(r["probabilities"]) if r["probabilities"] else {},
-        "tdp_features": json.loads(r["tdp_features"]) if r["tdp_features"] else {},
-        "quality_report": json.loads(r["quality_report"]) if r["quality_report"] else {},
-        "notes": r["notes"] or "",
-        "created_at": r["created_at"],
-        "model_version": r["model_version"]
+        'id': r['id'],
+        'filename': r.get('filename'),
+        'original_image_url': r.get('original_image_url'),
+        'heatmap_image_url': r.get('heatmap_image_url'),
+        'prediction': r.get('prediction'),
+        'confidence': r.get('confidence'),
+        'probabilities': r.get('probabilities') or {},
+        'tdp_features': r.get('tdp_features') or {},
+        'quality_report': r.get('quality_report') or {},
+        'notes': r.get('notes') or '',
+        'created_at': r.get('created_at'),
+        'model_version': r.get('model_version'),
     } for r in rows])
 
 
 @app.route('/api/scans/<scan_id>', methods=['GET'])
 def get_scan(scan_id):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
-    r = cursor.fetchone()
-    conn.close()
-    if not r:
-        return jsonify({"error": "Scan not found"}), 404
+    res = db.table('scans').select('*').eq('id', scan_id).execute()
+    if not res.data:
+        return jsonify({'error': 'Scan not found'}), 404
+    r = res.data[0]
     return jsonify({
-        "id": r["id"],
-        "filename": r["filename"],
-        "original_image_url": r["original_image_url"],
-        "heatmap_image_url": r["heatmap_image_url"],
-        "prediction": r["prediction"],
-        "confidence": r["confidence"],
-        "probabilities": json.loads(r["probabilities"]) if r["probabilities"] else {},
-        "tdp_features": json.loads(r["tdp_features"]) if r["tdp_features"] else {},
-        "quality_report": json.loads(r["quality_report"]) if r["quality_report"] else {},
-        "notes": r["notes"] or "",
-        "created_at": r["created_at"],
-        "model_version": r["model_version"]
+        'id': r['id'],
+        'filename': r.get('filename'),
+        'original_image_url': r.get('original_image_url'),
+        'heatmap_image_url': r.get('heatmap_image_url'),
+        'prediction': r.get('prediction'),
+        'confidence': r.get('confidence'),
+        'probabilities': r.get('probabilities') or {},
+        'tdp_features': r.get('tdp_features') or {},
+        'quality_report': r.get('quality_report') or {},
+        'notes': r.get('notes') or '',
+        'created_at': r.get('created_at'),
+        'model_version': r.get('model_version'),
     })
 
 
 @app.route('/api/scans', methods=['DELETE'])
 def delete_all_scans():
     user_id = request.args.get('user_id')
-    conn = get_db()
-    cursor = conn.cursor()
-    if user_id:
-        cursor.execute("DELETE FROM scans WHERE user_id = ?", (user_id,))
-    else:
-        cursor.execute("DELETE FROM scans")
-    conn.commit()
-    conn.close()
-    return jsonify({"success": True})
+    sb_delete_scans(user_id)
+    return jsonify({'success': True})
 
 
 @app.route('/api/scans/<scan_id>', methods=['DELETE'])
 def delete_scan(scan_id):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({"success": True})
+    sb_delete_scan(scan_id)
+    return jsonify({'success': True})
 
 
 @app.route('/api/scans/<scan_id>/notes', methods=['POST'])
 def update_scan_notes(scan_id):
     notes = (request.json or {}).get('notes', '')
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE scans SET notes = ? WHERE id = ?", (notes, scan_id))
-    conn.commit()
-    conn.close()
-    return jsonify({"success": True, "notes": notes})
+    sb_update_notes(scan_id, notes)
+    return jsonify({'success': True, 'notes': notes})
 
 
 @app.route('/api/insights', methods=['GET'])
 def get_insights():
     user_id = request.args.get('user_id')
-    conn = get_db()
-    cursor = conn.cursor()
-    if user_id:
-        cursor.execute("SELECT COUNT(*) FROM scans WHERE user_id = ?", (user_id,))
-        total_scans = cursor.fetchone()[0]
-        cursor.execute("SELECT prediction, COUNT(*) as cnt FROM scans WHERE user_id = ? GROUP BY prediction", (user_id,))
-        distribution = {r["prediction"]: r["cnt"] for r in cursor.fetchall()}
-        cursor.execute("SELECT prediction FROM scans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", (user_id,))
-    else:
-        cursor.execute("SELECT COUNT(*) FROM scans")
-        total_scans = cursor.fetchone()[0]
-        cursor.execute("SELECT prediction, COUNT(*) as cnt FROM scans GROUP BY prediction")
-        distribution = {r["prediction"]: r["cnt"] for r in cursor.fetchall()}
-        cursor.execute("SELECT prediction FROM scans ORDER BY created_at DESC LIMIT 1")
-    latest_r = cursor.fetchone()
-    conn.close()
-
+    rows = sb_get_scans(user_id)
+    total_scans = len(rows)
+    distribution = {}
+    for r in rows:
+        p = r.get('prediction', 'Unknown')
+        distribution[p] = distribution.get(p, 0) + 1
+    latest = rows[0].get('prediction') if rows else 'None'
     return jsonify({
-        "total_scans": total_scans,
-        "latest_prediction": latest_r["prediction"] if latest_r else "None",
-        "prediction_distribution": distribution,
+        'total_scans': total_scans,
+        'latest_prediction': latest,
+        'prediction_distribution': distribution,
     })
 
 
