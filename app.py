@@ -25,7 +25,7 @@ os.makedirs(SAMPLES_DIR, exist_ok=True)
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # ============================================================
 # EXACT CLASS INDICES FROM ORIGINAL TRAINING CODE
