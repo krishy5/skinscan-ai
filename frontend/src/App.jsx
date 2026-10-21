@@ -81,7 +81,8 @@ export default function App() {
   // ── Data fetching ─────────────────────────────────────────
   const fetchScans = useCallback(async (userId) => {
     try {
-      const url = userId ? `/api/scans?user_id=${userId}` : '/api/scans';
+      const apiBase = import.meta.env.VITE_API_URL || '';
+      const url = userId ? `${apiBase}/api/scans?user_id=${userId}` : `${apiBase}/api/scans`;
       const res = await fetch(url);
       if (res.ok) setScans(await res.json());
     } catch (err) { console.error('Failed to fetch scans:', err); }
@@ -89,7 +90,8 @@ export default function App() {
 
   const fetchInsights = useCallback(async (userId) => {
     try {
-      const url = userId ? `/api/insights?user_id=${userId}` : '/api/insights';
+      const apiBase = import.meta.env.VITE_API_URL || '';
+      const url = userId ? `${apiBase}/api/insights?user_id=${userId}` : `${apiBase}/api/insights`;
       const res = await fetch(url);
       if (res.ok) setInsightsData(await res.json());
     } catch (err) { console.error('Failed to fetch insights:', err); }
@@ -152,7 +154,8 @@ export default function App() {
 
   const handleDeleteScan = async (scanId) => {
     try {
-      await fetch(`/api/scans/${scanId}`, { method: 'DELETE' });
+      const apiBase = import.meta.env.VITE_API_URL || '';
+      await fetch(`${apiBase}/api/scans/${scanId}`, { method: 'DELETE' });
       setScans((prev) => prev.filter((s) => s.id !== scanId));
       fetchInsights(user?.id);
       showToast('Scan record deleted');
@@ -161,8 +164,9 @@ export default function App() {
 
   const handleClearHistory = async () => {
     try {
+      const apiBase = import.meta.env.VITE_API_URL || '';
       const userId = user?.id;
-      const url = userId ? `/api/scans?user_id=${userId}` : '/api/scans';
+      const url = userId ? `${apiBase}/api/scans?user_id=${userId}` : `${apiBase}/api/scans`;
       await fetch(url, { method: 'DELETE' });
       setScans([]);
       fetchInsights(userId);
@@ -186,7 +190,8 @@ export default function App() {
 
   const handleUpdateNotes = async (scanId, notes) => {
     try {
-      await fetch(`/api/scans/${scanId}/notes`, {
+      const apiBase = import.meta.env.VITE_API_URL || '';
+      await fetch(`${apiBase}/api/scans/${scanId}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes }),

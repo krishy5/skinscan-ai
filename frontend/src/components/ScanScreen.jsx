@@ -219,7 +219,8 @@ export default function ScanScreen({ demoMode, onScanCompleted, setActiveTab, on
       const formData = new FormData();
       formData.append('file', selectedFile);
       if (user?.id) formData.append('user_id', user.id);
-      const response = await fetch('/api/predict', { method: 'POST', body: formData });
+      const apiBase = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${apiBase}/api/predict`, { method: 'POST', body: formData });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || 'Server error occurred during model inference.');
