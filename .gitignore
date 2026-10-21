@@ -9,5 +9,4 @@ __pycache__/
 skinscan.db
 static/uploads/
 *.h5
-*.tflite
 .DS_Store
