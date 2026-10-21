@@ -156,6 +156,7 @@ def init_db():
 
 def seed_sample_scans(cursor):
     """Seed 3 sample scans reflecting the model's actual 3 classes."""
+    base = "https://skinscan-ai-avxh.onrender.com"
     samples = [
         {
             "id": "scan-101",
@@ -196,8 +197,8 @@ def seed_sample_scans(cursor):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             s["id"], "user-1", s["filename"],
-            f"/static/samples/{s['filename']}",
-            f"/static/samples/heatmap_{s['filename']}",
+            f"{base}/static/samples/{s['filename']}",
+            f"{base}/static/samples/heatmap_{s['filename']}",
             s["prediction"], s["confidence"],
             json.dumps(s["probabilities"]),
             json.dumps(s["probabilities"]),
@@ -428,6 +429,11 @@ def predict_lesion():
         original_url = f"/static/uploads/{filename}"
         heatmap_url = f"/static/uploads/{heatmap_filename}"
 
+        # Use full URL so frontend on different domain can load images
+        render_host = request.host_url.rstrip('/')
+        original_url_full = f"{render_host}/static/uploads/{filename}"
+        heatmap_url_full = f"{render_host}/static/uploads/{heatmap_filename}"
+
         # Persist to DB
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
         user_id = request.form.get('user_id') or 'guest'
@@ -440,7 +446,7 @@ def predict_lesion():
                  tdp_features, quality_report, created_at, model_version)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            scan_id, user_id, filename, original_url, heatmap_url,
+            scan_id, user_id, filename, original_url_full, heatmap_url_full,
             top_class, confidence,
             json.dumps(probs),
             json.dumps(probs),
@@ -457,8 +463,8 @@ def predict_lesion():
             "prediction": top_class,
             "confidence": confidence,
             "probabilities": probs,
-            "original_image_url": original_url,
-            "heatmap_image_url": heatmap_url,
+            "original_image_url": original_url_full,
+            "heatmap_image_url": heatmap_url_full,
             "tdp_features": tdp_features,
             "quality_report": quality_report,
             "model_version": MODEL_VERSION,
